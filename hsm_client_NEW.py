@@ -94,7 +94,8 @@ def verify_signature(message, raw_signature, public_key):
         print(f"❌ Unexpected error during verification: {e}")
 
 def send_message_for_signature(message):
-    ser.write(b"SIGN\n")  # Tell STM32 we want to sign a message
+    ser.reset_input_buffer()  # Clear leftover messages
+    ser.write(b"SIGN\n")
     time.sleep(0.2)
 
     print("📨 Sent SIGN command. Waiting for STM32...")
@@ -102,9 +103,7 @@ def send_message_for_signature(message):
     # Check initial STM32 response
     while True:
         response = ser.readline().decode(errors='ignore').strip()
-        if not response:
-            print("❌ Timeout waiting for STM32.")
-            return
+
         print(f"📡 STM32: {response}")
         if "ERROR" in response:
             print("❌ Aborting: STM32 not ready to sign.")
@@ -159,10 +158,6 @@ def receive_public_key():
 
     while True:
         response = ser.readline().decode(errors='ignore').strip()
-
-        if not response:
-            print("❌ Timeout while waiting for STM32 response.")
-            return None
 
         if "[PUBKEY]" in response:
             break  # continue receiving key
@@ -236,6 +231,8 @@ if __name__ == '__main__':
         print("  8 - USEKEY 2 (Key 2 verwenden)")
         print("  9 - DELKEYS (Alle Schlüssel löschen)")
         print(" 10 - KEYINFO (Public Key Hex Werte zeigen)")
+
+        ser.reset_input_buffer()
 
         choice = input("> ").strip().upper()
         command = MENU.get(choice, choice)  
