@@ -1,6 +1,7 @@
 import serial
 import time
 import hashlib
+import datetime
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.exceptions import InvalidSignature
@@ -33,7 +34,6 @@ def send_command(command):
             print(f"📡 STM32: {response}")
         if "Waiting for command..." in response:
             break
-
 
 def verify_signature(message, raw_signature, public_key):
     """
@@ -204,6 +204,52 @@ def reconstruct_pub_key(received_public_key_bytes):
         print("❌ ERROR: Invalid EC key. The point is not on the SECP256R1 curve.")
         return None
 
+def get_flash_logs():
+    ser.reset_input_buffer()
+    ser.write(b"GETLOGS\n")
+
+    print("\n📜 Flash Audit Logs from STM32:\n" + "-" * 40)
+
+    log_lines = []
+    start_time = time.time()
+
+    while True:
+        line = ser.readline().decode(errors="ignore").strip()
+        #print(f"🔍 RAW: {repr(line)}")
+
+        # If line is empty: check for timeout
+        if not line:
+            if time.time() - start_time > 1:
+                break
+            continue
+
+        # Got something → reset timeout window
+        start_time = time.time()
+
+        # Filter junk/system lines
+        if (
+            not line
+            or line.isspace()
+            or any(x in line for x in ("\x00", "\x01", "\x1b"))
+            or line.startswith("Received:")
+            or "Waiting for" in line
+        ):
+            continue
+
+        # Valid log line
+        print("•", line)
+        log_lines.append(line)
+
+    # Optional: save to file
+    if log_lines:
+        filename = f"audit_flash_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(filename, "w") as f:
+            for entry in log_lines:
+                f.write(entry + "\n")
+        print(f"\n✅ Logs saved to: {filename}")
+    else:
+        print("⚠️ No logs found.")
+
 # ========================== Main Interactive Menu ==========================
 if __name__ == '__main__':
     MENU = {
@@ -216,7 +262,8 @@ if __name__ == '__main__':
         "7": "USEKEY 1",
         "8": "USEKEY 2",
         "9": "DELKEYS",
-        "10": "KEYINFO"
+        "10": "KEYINFO",
+        "11": "GETLOGS"
     }   
         
     while True:
@@ -231,6 +278,7 @@ if __name__ == '__main__':
         print("  8 - USEKEY 2 (Key 2 verwenden)")
         print("  9 - DELKEYS (Alle Schlüssel löschen)")
         print(" 10 - KEYINFO (Public Key Hex Werte zeigen)")
+        print(" 11 - GETLOGS (Audit-Log speichern)")
 
         ser.reset_input_buffer()
 
@@ -250,6 +298,8 @@ if __name__ == '__main__':
                 stm32_public_key = reconstruct_pub_key(received_public_key_bytes)
             else:
                 print("❌ Kein gültiger Public Key empfangen.")
+        elif command == "GETLOGS":
+            get_flash_logs()
 
         else:
             send_command(command)
