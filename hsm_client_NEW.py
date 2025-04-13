@@ -250,6 +250,24 @@ def get_flash_logs():
     else:
         print("⚠️ No logs found.")
 
+
+def send_rtc_time():
+    # Get current local system time
+    now = datetime.datetime.now()
+    rtc_cmd = now.strftime("SETRTC %Y-%m-%d %H:%M:%S\n")
+
+    # Send the command over UART
+    ser.reset_input_buffer()
+    ser.write(rtc_cmd.encode())
+
+    print(f"📡 Sent to STM32: {rtc_cmd.strip()}")
+
+    # Read response from STM32
+    time.sleep(0.2)  # short wait to allow STM32 to respond
+    while ser.in_waiting:
+        response = ser.readline().decode(errors="ignore").strip()
+        if response:
+            print(f"📟 STM32: {response}")
 # ========================== Main Interactive Menu ==========================
 if __name__ == '__main__':
     MENU = {
@@ -263,7 +281,8 @@ if __name__ == '__main__':
         "8": "USEKEY 2",
         "9": "DELKEYS",
         "10": "KEYINFO",
-        "11": "GETLOGS"
+        "11": "GETLOGS",
+        "12": "SETRTC"
     }   
         
     while True:
@@ -279,6 +298,8 @@ if __name__ == '__main__':
         print("  9 - DELKEYS (Alle Schlüssel löschen)")
         print(" 10 - KEYINFO (Public Key Hex Werte zeigen)")
         print(" 11 - GETLOGS (Audit-Log speichern)")
+        print(" 12 - SETRTC (RTC setzen)")
+
 
         ser.reset_input_buffer()
 
@@ -300,6 +321,8 @@ if __name__ == '__main__':
                 print("❌ Kein gültiger Public Key empfangen.")
         elif command == "GETLOGS":
             get_flash_logs()
+        elif command == "SETRTC":
+            send_rtc_time()
 
         else:
             send_command(command)
