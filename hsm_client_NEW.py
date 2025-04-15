@@ -247,8 +247,70 @@ def get_flash_logs():
             for entry in log_lines:
                 f.write(entry + "\n")
         print(f"\n✅ Logs saved to: {filename}")
+
+        # ⛓️ Direkt danach: Verifiziere Chain
+        print("\n🔎 Überprüfe Hash-Chain...")
+        verify_log_chain(log_lines)
     else:
         print("⚠️ No logs found.")
+
+def verify_log_chain(log_lines):
+    """
+    Verifiziert die Integrität der Audit-Log-Chain anhand der SHA-256-Hashes.
+    Erwartet:
+      Zeile 0: [Zeitstempel] COMMAND | DATA
+      Zeile 1: Hash: <64-hex-digits>
+    """
+    import hashlib
+    import re
+
+    previous_hash = bytes([0x00] * 32)  # Start-Hash im STM32
+    all_ok = True
+
+    for idx in range(0, len(log_lines), 2):
+        if idx + 1 >= len(log_lines):
+            print(f"⚠️ Unvollständiger Log bei Index {idx}, übersprungen.")
+            continue
+
+        message_line = log_lines[idx]
+        hash_line = log_lines[idx + 1]
+
+        # Hash-Zeile parsen
+        match = re.match(r"Hash:\s*([a-fA-F0-9]{64})", hash_line)
+        if not match:
+            print(f"❌ Kein gültiger Hash bei Eintrag {idx + 1}")
+            all_ok = False
+            continue
+
+        expected_hash = match.group(1).lower()
+
+        # STM32 speichert message als char[60] mit Null-Padding
+        message_bytes = message_line.encode("utf-8")
+        if len(message_bytes) > 60:
+            print(f"⚠️ WARNUNG: Log-Eintrag länger als 60 Bytes! Kann zu Abweichung führen.")
+
+        padded_msg = message_bytes.ljust(60, b'\x00')  # auf 60 Bytes auffüllen
+        combined = previous_hash + padded_msg
+
+        # SHA-256 Hash berechnen
+        computed_hash = hashlib.sha256(combined).hexdigest()
+
+        # Vergleich
+        if computed_hash != expected_hash:
+            print(f"❌ Ungültiger Hash bei Eintrag {idx//2}:")
+            print(f"  Nachricht   : {message_line}")
+            print(f"  Erwarteter : {expected_hash}")
+            print(f"  Berechnet  : {computed_hash}")
+            all_ok = False
+        else:
+            print(f"✅ Eintrag {idx//2} verifiziert.")
+
+        previous_hash = bytes.fromhex(expected_hash)  # für nächste Iteration
+
+    if all_ok:
+        print("\n✅ Audit-Hash-Chain ist intakt!")
+    else:
+        print("\n❌ Audit-Log wurde manipuliert oder ist beschädigt.")
 
 
 def send_rtc_time():
@@ -260,14 +322,14 @@ def send_rtc_time():
     ser.reset_input_buffer()
     ser.write(rtc_cmd.encode())
 
-    print(f"📡 Sent to STM32: {rtc_cmd.strip()}")
+    print(f"Sent to STM32: {rtc_cmd.strip()}")
 
     # Read response from STM32
     time.sleep(0.2)  # short wait to allow STM32 to respond
     while ser.in_waiting:
         response = ser.readline().decode(errors="ignore").strip()
         if response:
-            print(f"📟 STM32: {response}")
+            print(f"📡 STM32: {response}")
 # ========================== Main Interactive Menu ==========================
 if __name__ == '__main__':
     MENU = {
@@ -282,9 +344,12 @@ if __name__ == '__main__':
         "9": "DELKEYS",
         "10": "KEYINFO",
         "11": "GETLOGS",
-        "12": "SETRTC"
+        "12": "CLEARLOGS",
+        "13": "SETRTC"
     }   
-        
+
+    send_rtc_time() #set time at startup
+
     while True:
         print("\n🔹 Wähle eine Option:")
         print("  1 - GENKEY  (Schlüssel generieren)")
@@ -298,14 +363,15 @@ if __name__ == '__main__':
         print("  9 - DELKEYS (Alle Schlüssel löschen)")
         print(" 10 - KEYINFO (Public Key Hex Werte zeigen)")
         print(" 11 - GETLOGS (Audit-Log speichern)")
-        print(" 12 - SETRTC (RTC setzen)")
+        print(" 12 - CLEARLOGS (Audit-Log löschen)")
+        print(" 13 - SETRTC (RTC setzen)")
 
 
         ser.reset_input_buffer()
 
         choice = input("> ").strip().upper()
         command = MENU.get(choice, choice)  
-
+        
         if command == "EXIT":
             print("🔌 Closing connection...")
             ser.close()
