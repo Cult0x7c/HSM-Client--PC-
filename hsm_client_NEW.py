@@ -215,18 +215,14 @@ def get_flash_logs():
 
     while True:
         line = ser.readline().decode(errors="ignore").strip()
-        #print(f"🔍 RAW: {repr(line)}")
 
-        # If line is empty: check for timeout
         if not line:
-            if time.time() - start_time > 1:
+            if time.time() - start_time > 1.0:
                 break
             continue
 
-        # Got something → reset timeout window
         start_time = time.time()
 
-        # Filter junk/system lines
         if (
             not line
             or line.isspace()
@@ -236,11 +232,12 @@ def get_flash_logs():
         ):
             continue
 
-        # Valid log line
         print("•", line)
         log_lines.append(line)
 
-    # Optional: save to file
+        if line.startswith("Latest Hash:"):
+            break
+
     if log_lines:
         filename = f"audit_flash_log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         with open(filename, "w") as f:
@@ -248,69 +245,69 @@ def get_flash_logs():
                 f.write(entry + "\n")
         print(f"\n✅ Logs saved to: {filename}")
 
-        # ⛓️ Direkt danach: Verifiziere Chain
         print("\n🔎 Überprüfe Hash-Chain...")
         verify_log_chain(log_lines)
     else:
         print("⚠️ No logs found.")
 
 def verify_log_chain(log_lines):
-    """
-    Verifiziert die Integrität der Audit-Log-Chain anhand der SHA-256-Hashes.
-    Erwartet:
-      Zeile 0: [Zeitstempel] COMMAND | DATA
-      Zeile 1: Hash: <64-hex-digits>
-    """
     import hashlib
     import re
 
-    previous_hash = bytes([0x00] * 32)  # Start-Hash im STM32
-    all_ok = True
+    previous_hash = bytes([0x00] * 32)
+    last_computed_hash = None
+    final_hash_from_stm32 = None
 
-    for idx in range(0, len(log_lines), 2):
-        if idx + 1 >= len(log_lines):
-            print(f"⚠️ Unvollständiger Log bei Index {idx}, übersprungen.")
+    print("\n🔎 Hash-Chain-Debug:\n" + "-" * 64)
+
+    for idx, line in enumerate(log_lines):
+        line = line.strip()
+
+        if line.startswith("Latest Hash:"):
+            match = re.search(r"([a-fA-F0-9]{64})", line)
+            if match:
+                final_hash_from_stm32 = match.group(1).lower()
             continue
 
-        message_line = log_lines[idx]
-        hash_line = log_lines[idx + 1]
+        message_bytes = line.encode("utf-8")
+        if len(message_bytes) > 64:
+            print(f"⚠️ WARNUNG: Log-Eintrag {idx} -+ als 64 Bytes. Er wird abgeschnitten.")
+            message_bytes = message_bytes[:64]
 
-        # Hash-Zeile parsen
-        match = re.match(r"Hash:\s*([a-fA-F0-9]{64})", hash_line)
-        if not match:
-            print(f"❌ Kein gültiger Hash bei Eintrag {idx + 1}")
-            all_ok = False
-            continue
+        padded = message_bytes.ljust(64, b'\x00')
+        combined = previous_hash + padded
+        computed_hash = hashlib.sha256(combined).digest()
 
-        expected_hash = match.group(1).lower()
+        # 🧪 Debug info
+        print(f"🔹 MSG[{idx}]: {repr(line)}")
+        print(f"🔹 PAD : {padded.hex()}")
+        print(f"🔹 INPUT: {combined.hex()}")
+        print(f"🔹 HASH : {computed_hash.hex()}")
+        print("-" * 64)
 
-        # STM32 speichert message als char[60] mit Null-Padding
-        message_bytes = message_line.encode("utf-8")
-        if len(message_bytes) > 60:
-            print(f"⚠️ WARNUNG: Log-Eintrag länger als 60 Bytes! Kann zu Abweichung führen.")
+        last_computed_hash = computed_hash
+        previous_hash = computed_hash
 
-        padded_msg = message_bytes.ljust(60, b'\x00')  # auf 60 Bytes auffüllen
-        combined = previous_hash + padded_msg
+    if final_hash_from_stm32 is None:
+        print("❌ Kein gültiger Final-Hash vom STM32 empfangen.")
+        return
 
-        # SHA-256 Hash berechnen
-        computed_hash = hashlib.sha256(combined).hexdigest()
+    if last_computed_hash is None:
+        print("❌ Keine gültigen Log-Einträge zur Hash-Berechnung.")
+        return
 
-        # Vergleich
-        if computed_hash != expected_hash:
-            print(f"❌ Ungültiger Hash bei Eintrag {idx//2}:")
-            print(f"  Nachricht   : {message_line}")
-            print(f"  Erwarteter : {expected_hash}")
-            print(f"  Berechnet  : {computed_hash}")
-            all_ok = False
-        else:
-            print(f"✅ Eintrag {idx//2} verifiziert.")
+    computed_hex = last_computed_hash.hex()
+    print("\n🔍 Vergleich mit STM32 Final Hash:")
+    print(f"📦 Erwartet : {final_hash_from_stm32}")
+    print(f"🧮 Berechnet: {computed_hex}")
 
-        previous_hash = bytes.fromhex(expected_hash)  # für nächste Iteration
-
-    if all_ok:
-        print("\n✅ Audit-Hash-Chain ist intakt!")
+    if computed_hex == final_hash_from_stm32:
+        print("✅ Audit-Hash-Chain ist intakt!")
     else:
-        print("\n❌ Audit-Log wurde manipuliert oder ist beschädigt.")
+        print("❌ Audit-Hash-Chain ist ungültig!")
+
+
+
 
 
 def send_rtc_time():
