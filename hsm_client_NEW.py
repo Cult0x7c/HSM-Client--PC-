@@ -2,6 +2,9 @@ import serial
 import time
 import hashlib
 import datetime
+import re
+import statistics
+import csv
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes
 from cryptography.exceptions import InvalidSignature
@@ -251,9 +254,6 @@ def get_flash_logs():
         print("⚠️ No logs found.")
 
 def verify_log_chain(log_lines):
-    import hashlib
-    import re
-
     previous_hash = bytes([0x00] * 32)
     last_computed_hash = None
     final_hash_from_stm32 = None
@@ -278,7 +278,7 @@ def verify_log_chain(log_lines):
         combined = previous_hash + padded
         computed_hash = hashlib.sha256(combined).digest()
 
-        # 🧪 Debug info
+        # Debug info
         print(f"🔹 MSG[{idx}]: {repr(line)}")
         print(f"🔹 PAD : {padded.hex()}")
         print(f"🔹 INPUT: {combined.hex()}")
@@ -306,11 +306,8 @@ def verify_log_chain(log_lines):
     else:
         print("❌ Audit-Hash-Chain ist ungültig!")
 
-
-
-
-
 def send_rtc_time():
+
     # Get current local system time
     now = datetime.datetime.now()
     rtc_cmd = now.strftime("SETRTC %Y-%m-%d %H:%M:%S\n")
@@ -327,41 +324,118 @@ def send_rtc_time():
         response = ser.readline().decode(errors="ignore").strip()
         if response:
             print(f"📡 STM32: {response}")
+
+def send_message_for_signature_noverify(message):
+    ser.reset_input_buffer()  # Clear leftover messages
+    ser.write(b"SIGN\n")
+    time.sleep(0.2)
+
+    while True:
+        response = ser.readline().decode(errors='ignore').strip()
+        if "ERROR" in response:
+            return False
+        if "Waiting for message" in response:
+            break
+        if "Waiting for command" in response:
+            return False
+
+    ser.write(message.encode('utf-8') + b"\n")
+    ser.write(b"[ENDSIGN]\n")
+
+    while True:
+        response = ser.readline().decode(errors='ignore').strip()
+        if "[SIGN]" in response:
+            break
+
+    signature = ser.read(64)
+    while True:
+        response = ser.readline().decode(errors='ignore').strip()
+        if "[ENDSIGN]" in response:
+            break
+
+    return True  # success
+
+def benchmark_operation(label, command, iterations, message=None):
+    times = []
+
+    for i in range(iterations):
+        start = time.perf_counter()
+        if command == "SIGN":
+            send_message_for_signature_noverify(message)
+            print(f"Sign Benchmark: {i+1} / {iterations}")
+        else:
+            send_command(command)
+            print(f"KeyGen Benchmark: {i+1} / {iterations}")
+        end = time.perf_counter()
+        elapsed = (end - start) * 1000  # ms
+        times.append(elapsed)
+        time.sleep(0.5)  # waitime for response
+
+    print(f"\n=== ⏱️ Benchmark-Ergebnisse für {label} ({iterations} Durchläufe) ===")
+    print(f"Min. Zeit        : {min(times):.3f} ms")
+    print(f"Max. Zeit        : {max(times):.3f} ms")
+    print(f"Durchschnitt     : {statistics.mean(times):.3f} ms")
+    print(f"Median           : {statistics.median(times):.3f} ms")
+    print(f"Standardabweichung: {statistics.stdev(times):.3f} ms")
+
+    # CSV-Export 
+    export_results_to_csv("benchmark_ergebnisse.csv", label, times)
+    return times
+
+
+def export_results_to_csv(filename, test_label, values):
+    """
+    Exportiert Benchmark-Ergebnisse in eine CSV-Datei.
+    Fügt Zeitstempel, Testnamen und Messwerte hinzu.
+    """
+    with open(filename, "a", newline="") as csvfile:  # a = append mode
+        writer = csv.writer(csvfile)
+        
+        # Optional: Kopfzeile nur bei leerer Datei hinzufügen
+        if csvfile.tell() == 0:
+            writer.writerow(["Zeitstempel", "Test", "Durchlauf", "Laufzeit (ms)"])
+        
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for i, val in enumerate(values, 1):
+            writer.writerow([timestamp, test_label, i, f"{val:.3f}"])
+
+
+def run_performance_analysis():
+    iterations = 1000
+    benchmark_operation("ECC Key Generation", "GENKEY", iterations)
+    benchmark_operation("ECDSA Signatur", "SIGN", iterations, message="TestString123")
+
 # ========================== Main Interactive Menu ==========================
 if __name__ == '__main__':
     MENU = {
         "1": "GENKEY",
         "2": "SENDPUB",
         "3": "SIGN",
-        "4": "HELP",
-        "5": "EXIT",
-        "6": "USEKEY 0",
-        "7": "USEKEY 1",
-        "8": "USEKEY 2",
-        "9": "DELKEYS",
-        "10": "KEYINFO",
-        "11": "GETLOGS",
-        "12": "CLEARLOGS",
-        "13": "SETRTC"
+        "4": "EXIT",
+        "5": "USEKEY 0",
+        "6": "USEKEY 1",
+        "7": "USEKEY 2",
+        "8": "DELKEYS",
+        "9": "KEYINFO",
+        "10": "GETLOGS",
+        "11": "CLEARLOGS",
     }   
 
-    send_rtc_time() #set time at startup
+    send_rtc_time()  # set time at startup
 
     while True:
         print("\n🔹 Wähle eine Option:")
-        print("  1 - GENKEY  (Schlüssel generieren)")
-        print("  2 - SENDPUB (Public Key senden)")
-        print("  3 - SIGN    (Nachricht signieren)")
-        print("  4 - HELP    (Befehlsübersicht)")
-        print("  5 - EXIT    (Beenden)")
-        print("  6 - USEKEY 0 (Key 0 verwenden)")
-        print("  7 - USEKEY 1 (Key 1 verwenden)")
-        print("  8 - USEKEY 2 (Key 2 verwenden)")
-        print("  9 - DELKEYS (Alle Schlüssel löschen)")
-        print(" 10 - KEYINFO (Public Key Hex Werte zeigen)")
-        print(" 11 - GETLOGS (Audit-Log speichern)")
-        print(" 12 - CLEARLOGS (Audit-Log löschen)")
-        print(" 13 - SETRTC (RTC setzen)")
+        print("  1 - GENKEY    (Schlüssel generieren)")
+        print("  2 - SENDPUB   (Public Key senden)")
+        print("  3 - SIGN      (Nachricht signieren)")
+        print("  4 - EXIT      (Beenden)")
+        print("  5 - USEKEY 0  (Key 0 verwenden)")
+        print("  6 - USEKEY 1  (Key 1 verwenden)")
+        print("  7 - USEKEY 2  (Key 2 verwenden)")
+        print("  8 - DELKEYS   (Alle Schlüssel löschen)")
+        print("  9 - KEYINFO   (Public Key Hex Werte zeigen)")
+        print(" 10 - GETLOGS   (Audit-Log speichern)")
+        print(" 11 - CLEARLOGS (Audit-Log löschen)")
 
 
         ser.reset_input_buffer()
@@ -386,6 +460,8 @@ if __name__ == '__main__':
             get_flash_logs()
         elif command == "SETRTC":
             send_rtc_time()
+        elif command == "PERFTEST":
+            run_performance_analysis()
 
         else:
             send_command(command)
