@@ -353,7 +353,7 @@ def send_message_for_signature_noverify(message):
         if "[ENDSIGN]" in response:
             break
 
-    return True  # success
+    return True  
 
 def benchmark_operation(label, command, iterations, message=None):
     times = []
@@ -382,23 +382,21 @@ def benchmark_operation(label, command, iterations, message=None):
     export_results_to_csv("benchmark_ergebnisse.csv", label, times)
     return times
 
-
 def export_results_to_csv(filename, test_label, values):
     """
     Exportiert Benchmark-Ergebnisse in eine CSV-Datei.
     Fügt Zeitstempel, Testnamen und Messwerte hinzu.
     """
-    with open(filename, "a", newline="") as csvfile:  # a = append mode
+    with open(filename, "a", newline="") as csvfile: 
         writer = csv.writer(csvfile)
         
-        # Optional: Kopfzeile nur bei leerer Datei hinzufügen
+        # Kopfzeile nur bei leerer Datei hinzufügen
         if csvfile.tell() == 0:
             writer.writerow(["Zeitstempel", "Test", "Durchlauf", "Laufzeit (ms)"])
         
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for i, val in enumerate(values, 1):
             writer.writerow([timestamp, test_label, i, f"{val:.3f}"])
-
 
 def run_performance_analysis():
     iterations = 1000
